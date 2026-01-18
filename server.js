@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
 const WebSocket = require('ws');
 
 const app = express();
@@ -13,14 +12,17 @@ app.use(cors({
   origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
   credentials: true
 }));
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // In-memory storage (replace with database in production)
 const gameData = {
   players: {},
   gameStates: {}
 };
+
+console.warn('⚠️  WARNING: Using in-memory storage. All data will be lost on server restart.');
+console.warn('⚠️  For production, implement persistent storage (database).');
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -69,9 +71,19 @@ app.put('/api/player/:playerId', (req, res) => {
     return res.status(404).json({ error: 'Player not found' });
   }
   
+  // Whitelist of allowed updatable fields
+  const allowedFields = ['playerName', 'score', 'level'];
+  const filteredUpdates = {};
+  
+  allowedFields.forEach(field => {
+    if (updates.hasOwnProperty(field)) {
+      filteredUpdates[field] = updates[field];
+    }
+  });
+  
   gameData.players[playerId] = {
     ...gameData.players[playerId],
-    ...updates,
+    ...filteredUpdates,
     lastUpdated: new Date().toISOString()
   };
   
@@ -119,7 +131,7 @@ app.post('/api/gamestate', (req, res) => {
 
 // Leaderboard endpoint
 app.get('/api/leaderboard', (req, res) => {
-  const limit = parseInt(req.query.limit) || 10;
+  const limit = Math.min(parseInt(req.query.limit) || 10, 100);
   
   const sortedPlayers = Object.values(gameData.players)
     .sort((a, b) => (b.score || 0) - (a.score || 0))
@@ -137,6 +149,16 @@ wss.on('connection', (ws) => {
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
+      
+      // Validate message structure
+      if (!data || typeof data !== 'object') {
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: 'Invalid message format: data must be an object'
+        }));
+        return;
+      }
+      
       console.log('Received:', data);
       
       // Echo back to client

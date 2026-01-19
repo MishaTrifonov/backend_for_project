@@ -10,6 +10,7 @@ A Node.js/Express backend service designed to support Unity WebGL applications w
 - **Docker Support**: Easy deployment with Docker and Docker Compose
 - **Leaderboard System**: Built-in leaderboard functionality
 - **Health Monitoring**: Health check endpoint for monitoring
+- **MongoDB-backed Auth**: `/api/login` compatible with Unity WebGL `AuthenticationManager`
 
 ## Prerequisites
 
@@ -43,6 +44,11 @@ PORT=3000
 NODE_ENV=development
 ALLOWED_ORIGINS=http://localhost:3000,https://yourgame.com
 WS_PORT=8080
+
+# Auth (MongoDB)
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster-url>/ClassroomSimulator?retryWrites=true&w=majority
+MONGODB_DB=ClassroomSimulator
+MONGODB_USERS_COLLECTION=users
 ```
 
 5. Start the server:
@@ -81,6 +87,16 @@ docker-compose down
 - **GET** `/health`
   - Returns server health status and uptime
   - Response: `{ status: 'ok', timestamp: '...', uptime: 123.45 }`
+
+### Authentication (MongoDB)
+
+- **POST** `/api/login`
+  - Body: `{ "username": "admin", "password": "admin123" }`
+  - Response: `{ success, message, user, sessionToken }`
+
+- **POST** `/api/register` (optional)
+  - Body: `{ "username": "...", "password": "...", "fullName": "..." }`
+  - Response: `{ success, message }`
 
 ### Player Management
 

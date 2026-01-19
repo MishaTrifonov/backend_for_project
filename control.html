@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Unity Backend Control</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, Arial; margin: 16px; }
+    .controls { margin-bottom: 12px; }
+    button { margin-right: 8px; padding: 8px 12px; }
+    pre { background:#111; color:#eee; padding:12px; height:60vh; overflow:auto; white-space:pre-wrap; }
+    .status { margin-bottom:8px; font-size:90%; color:#333; }
+  </style>
+</head>
+<body>
+  <h2>Unity Backend Control</h2>
+  <div class="status" id="status">Loading status...</div>
+  <div class="controls">
+    <button id="stopBtn">Stop Server</button>
+    <button id="restartBtn">Restart Server</button>
+    <button id="refreshLogsBtn">Refresh Logs</button>
+  </div>
+  <div>
+    <h3>Logs</h3>
+    <pre id="logs">Loading logs...</pre>
+  </div>
+  <div>
+    <h3>Recent Errors</h3>
+    <pre id="errors">Loading errors...</pre>
+  </div>
+
+  <script>
+    async function fetchJSON(path, opts) {
+      try {
+        const res = await fetch(path, opts);
+        return await res.json();
+      } catch (e) {
+        return { error: String(e) };
+      }
+    }
+
+    const statusEl = document.getElementById('status');
+    const logsEl = document.getElementById('logs');
+    const stopBtn = document.getElementById('stopBtn');
+    const restartBtn = document.getElementById('restartBtn');
+    const refreshLogsBtn = document.getElementById('refreshLogsBtn');
+    const errorsEl = document.getElementById('errors');
+
+    async function updateStatus() {
+      const s = await fetchJSON('/control/status');
+      if (s && s.pid) {
+        statusEl.textContent = `PID: ${s.pid} | Uptime: ${Math.round(s.uptime)}s | Started: ${s.startedAt}`;
+        stopBtn.disabled = false;
+        restartBtn.disabled = false;
+      } else {
+        statusEl.textContent = `Server not responding to /control/status.`;
+      }
+    }
+
+    async function loadLogs() {
+      logsEl.textContent = 'Loading logs...';
+      const j = await fetchJSON('/control/logs');
+      if (j && j.logs !== undefined) {
+        logsEl.textContent = j.logs || '(no logs)';
+        logsEl.scrollTop = logsEl.scrollHeight;
+      } else {
+        logsEl.textContent = 'Failed to load logs: ' + (j.error || JSON.stringify(j));
+      }
+    }
+
+    async function loadErrors() {
+      errorsEl.textContent = 'Loading errors...';
+      const j = await fetchJSON('/control/errors');
+      if (j && Array.isArray(j.errors)) {
+        if (j.errors.length === 0) errorsEl.textContent = '(no recent errors)';
+        else errorsEl.textContent = j.errors.map(e => `${e.ts} [${e.level}] ${e.message}`).join('\n\n');
+        errorsEl.scrollTop = errorsEl.scrollHeight;
+      } else {
+        errorsEl.textContent = 'Failed to load errors: ' + (j.error || JSON.stringify(j));
+      }
+    }
+
+    stopBtn.addEventListener('click', async () => {
+      if (!confirm('Stop the server process? This will terminate the current Node process.')) return;
+      stopBtn.disabled = true;
+      restartBtn.disabled = true;
+      const r = await fetchJSON('/control/stop', { method: 'POST' });
+      alert(JSON.stringify(r));
+    });
+
+    restartBtn.addEventListener('click', async () => {
+      if (!confirm('Restart server (spawn a new detached process)?')) return;
+      stopBtn.disabled = true;
+      restartBtn.disabled = true;
+      const r = await fetchJSON('/control/restart', { method: 'POST' });
+      alert(JSON.stringify(r));
+    });
+
+    refreshLogsBtn.addEventListener('click', loadLogs);
+
+    updateStatus();
+    loadLogs();
+    loadErrors();
+    setInterval(updateStatus, 5000);
+    setInterval(loadLogs, 5000);
+    setInterval(loadErrors, 5000);
+  </script>
+</body>
+</html>

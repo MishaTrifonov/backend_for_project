@@ -2,13 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const cors = require('cors');
-const crypto = require('crypto');
-
-const fs = require('fs');
-const path = require('path');
-const { spawn } = require('child_process');
+const path = require("path");
 
 const app = express();
 
@@ -16,33 +11,23 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const startTime = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    log('INFO', `${req.method} ${req.url} - ${res.statusCode} (${duration}ms)`);
+  });
+  next();
+});
+
 // MongoDB Connection
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/myapp';
 console.log('Connecting to MongoDB at', mongoUri);
 mongoose.connect(mongoUri)
   .then(() => console.log('MongoDB Connected'))
   .catch(err => console.log('MongoDB Connection Error:', err));
-// mongoose
-//   .connect(mongoUri)
-//   .then(() => {
-//     console.log("Connected to MongoDB");
-//     // Access the native MongoDB Db instance
-//     const db = mongoose.connection.db;
-//     // Use native driver methods directly on the 'db' object
-//     // For example, listing all collection names:
-//     db.listCollections().toArray((err, collections) => {
-//       if (err) {
-//         console.error(err);
-//         return;
-//       }
-//       console.log(
-//         "Collections:",
-//         collections.map((c) => c.name),
-//       );
-//     });
-//     console.log("Finished listing collections");
-//   })
-//   .catch((err) => console.error("MongoDB connection error:", err));
+
 // User Schema
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
@@ -58,6 +43,96 @@ const userSchema = new mongoose.Schema({
 }, { collection: 'users' });
 
 const User = mongoose.model('users', userSchema);
+
+// Server state tracking
+const serverState = {
+  startedAt: new Date().toISOString(),
+  pid: process.pid,
+  logs: [],
+  errors: [],
+  maxLogs: 1000,
+  maxErrors: 100
+};
+
+// Custom logging function
+function log(level, message, ...args) {
+  const timestamp = new Date().toISOString();
+  const fullMessage = args.length > 0 ? `${message} ${args.join(' ')}` : message;
+  const logMessage = `[${timestamp}] [${level}] ${fullMessage}`;
+  
+  // Console output using original methods
+  if (level === 'ERROR') {
+    originalError(logMessage);
+  } else if (level === 'WARN') {
+    originalWarn(logMessage);
+  } else {
+    originalLog(logMessage);
+  }
+  
+  // Store in memory
+  serverState.logs.push({ ts: timestamp, level, message: fullMessage });
+  if (serverState.logs.length > serverState.maxLogs) {
+    serverState.logs.shift();
+  }
+  
+  // Track errors separately
+  if (level === 'ERROR' || level === 'WARN') {
+    serverState.errors.push({ ts: timestamp, level, message: fullMessage });
+    if (serverState.errors.length > serverState.maxErrors) {
+      serverState.errors.shift();
+    }
+  }
+}
+
+// Store original console methods
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+
+// Override console methods to capture all output
+console.log = function(...args) {
+  log('INFO', ...args);
+};
+
+console.error = function(...args) {
+  log('ERROR', ...args);
+};
+
+console.warn = function(...args) {
+  log('WARN', ...args);
+};
+
+
+// Register/Create User Route
+app.post("/api/register", async (req, res) => {
+  try {
+    console.log("Registration attempt");
+
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(req.body.password, saltRounds);
+
+    const newUser = new User({
+      ...req.body,
+      passwordHash,
+      
+    });
+
+    await newUser.save();
+    console.log("User created successfully");
+
+    return res.status(201).json({
+      success: true,
+      message: "User created successfully"
+    });
+  } catch (error) {
+    console.error("Registration error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error during registration",
+      error: error.message
+    });
+  }
+});
 
 // Login Route
 app.post("/api/login", async (req, res) => {
@@ -76,13 +151,7 @@ app.post("/api/login", async (req, res) => {
     // Print current database and collection info
     const db = mongoose.connection.db;
     console.log("Connected to DB:", db.databaseName);
-    // const collections = await db.listCollections().toArray();
-    // console.log(
-    //   "Collections in DB:",
-    //   collections.map((c) => c.name),
-    // );
 
-    // Use Mongoose model for user lookup
     const user = await User.findOne({ username });
     console.log("User found for login:", user ? user.username : "none");
     if (user) {
@@ -132,6 +201,7 @@ app.post("/api/login", async (req, res) => {
       isActive: user.isActive,
       sessionCount: user.sessionCount || 0,
       allowedScenarios: user.allowedScenarios || [],
+      createdAt: user.createdAt,
     };
 
     console.log("Login successful for user:", username);
@@ -154,10 +224,55 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get("/control", (req, res) => {
+  res.sendFile(path.join(__dirname, "control.html"));
+});
+
+// Control API endpoints
+app.get('/control/status', (req, res) => {
+  const uptime = (Date.now() - new Date(serverState.startedAt).getTime()) / 1000;
+  res.json({
+    pid: serverState.pid,
+    uptime: uptime,
+    startedAt: serverState.startedAt,
+    mongoConnected: mongoose.connection.readyState === 1
+  });
+});
+
+app.get('/control/logs', (req, res) => {
+  const limit = parseInt(req.query.limit) || 500;
+  const recentLogs = serverState.logs.slice(-limit);
+  const logsText = recentLogs.map(l => `[${l.ts}] [${l.level}] ${l.message}`).join('\n');
+  res.json({ logs: logsText, count: recentLogs.length });
+});
+
+app.get('/control/errors', (req, res) => {
+  res.json({ errors: serverState.errors });
+});
+
+app.post('/control/stop', (req, res) => {
+  console.log('Stop command received, shutting down server...');
+  res.json({ success: true, message: 'Server shutting down' });
+  setTimeout(() => {
+    process.exit(0);
+  }, 1000);
+});
+
+app.post('/control/restart', (req, res) => {
+  console.log('Restart command received');
+  res.json({ 
+    success: true, 
+    message: 'Restart not implemented - please use a process manager like PM2 for auto-restart' 
+  });
+});
+
 // Start server when run directly
 if (require.main === module) {
   const port = Number(process.env.PORT) || 3000;
-  app.listen(port, () => console.log(`Server listening on http://localhost:${port}`));
+  app.listen(port, () => {
+    console.log(`Server listening on http://localhost:${port}`);
+    console.log(`Control panel available at http://localhost:${port}/control`);
+  });
 }
 
 module.exports = app;

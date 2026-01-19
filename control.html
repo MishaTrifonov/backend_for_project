@@ -31,10 +31,15 @@
 
   <script>
     async function fetchJSON(path, opts) {
+      console.log(`Fetching ${path}...`, opts);
       try {
         const res = await fetch(path, opts);
-        return await res.json();
+        console.log(`Response from ${path}:`, res.status, res.statusText);
+        const data = await res.json();
+        console.log(`Data from ${path}:`, data);
+        return data;
       } catch (e) {
+        console.error(`Error fetching ${path}:`, e);
         return { error: String(e) };
       }
     }
@@ -49,11 +54,12 @@
     async function updateStatus() {
       const s = await fetchJSON('/control/status');
       if (s && s.pid) {
-        statusEl.textContent = `PID: ${s.pid} | Uptime: ${Math.round(s.uptime)}s | Started: ${s.startedAt}`;
+        statusEl.textContent = `PID: ${s.pid} | Uptime: ${Math.round(s.uptime)}s | Started: ${s.startedAt} | MongoDB: ${s.mongoConnected ? 'Connected' : 'Disconnected'}`;
         stopBtn.disabled = false;
         restartBtn.disabled = false;
       } else {
         statusEl.textContent = `Server not responding to /control/status.`;
+        console.error('Status check failed:', s);
       }
     }
 
@@ -63,8 +69,10 @@
       if (j && j.logs !== undefined) {
         logsEl.textContent = j.logs || '(no logs)';
         logsEl.scrollTop = logsEl.scrollHeight;
+        console.log(`Loaded ${j.count || 0} log entries`);
       } else {
         logsEl.textContent = 'Failed to load logs: ' + (j.error || JSON.stringify(j));
+        console.error('Failed to load logs:', j);
       }
     }
 
@@ -72,38 +80,52 @@
       errorsEl.textContent = 'Loading errors...';
       const j = await fetchJSON('/control/errors');
       if (j && Array.isArray(j.errors)) {
-        if (j.errors.length === 0) errorsEl.textContent = '(no recent errors)';
-        else errorsEl.textContent = j.errors.map(e => `${e.ts} [${e.level}] ${e.message}`).join('\n\n');
-        errorsEl.scrollTop = errorsEl.scrollHeight;
+        if (j.errors.length === 0) {
+          errorsEl.textContent = '(no recent errors)';
+          console.log('No errors found');
+        } else {
+          errorsEl.textContent = j.errors.map(e => `${e.ts} [${e.level}] ${e.message}`).join('\n\n');
+          errorsEl.scrollTop = errorsEl.scrollHeight;
+          console.log(`Loaded ${j.errors.length} error entries`);
+        }
       } else {
         errorsEl.textContent = 'Failed to load errors: ' + (j.error || JSON.stringify(j));
+        console.error('Failed to load errors:', j);
       }
     }
 
     stopBtn.addEventListener('click', async () => {
       if (!confirm('Stop the server process? This will terminate the current Node process.')) return;
+      console.log('Stop button clicked');
       stopBtn.disabled = true;
       restartBtn.disabled = true;
       const r = await fetchJSON('/control/stop', { method: 'POST' });
+      console.log('Stop response:', r);
       alert(JSON.stringify(r));
     });
 
     restartBtn.addEventListener('click', async () => {
       if (!confirm('Restart server (spawn a new detached process)?')) return;
+      console.log('Restart button clicked');
       stopBtn.disabled = true;
       restartBtn.disabled = true;
       const r = await fetchJSON('/control/restart', { method: 'POST' });
+      console.log('Restart response:', r);
       alert(JSON.stringify(r));
     });
 
-    refreshLogsBtn.addEventListener('click', loadLogs);
+    refreshLogsBtn.addEventListener('click', () => {
+      console.log('Refresh logs button clicked');
+      loadLogs();
+    });
 
+    console.log('Control panel initialized');
     updateStatus();
     loadLogs();
     loadErrors();
-    setInterval(updateStatus, 5000);
-    setInterval(loadLogs, 5000);
-    setInterval(loadErrors, 5000);
+    setInterval(updateStatus, 10000);
+    setInterval(loadLogs, 10000);
+    setInterval(loadErrors, 10000);
   </script>
 </body>
 </html>

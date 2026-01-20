@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const path = require("path");
+const { spawn } = require('child_process');
 
 const app = express();
 
@@ -44,9 +45,21 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('users', userSchema);
 
+// Date formatting function
+function formatDate(date) {
+  const d = new Date(date);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = String(d.getFullYear()).slice(-2);
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const seconds = String(d.getSeconds()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+}
+
 // Server state tracking
 const serverState = {
-  startedAt: new Date().toISOString(),
+  startedAt: formatDate(new Date()),
   pid: process.pid,
   logs: [],
   errors: [],
@@ -56,7 +69,7 @@ const serverState = {
 
 // Custom logging function
 function log(level, message, ...args) {
-  const timestamp = new Date().toISOString();
+  const timestamp = formatDate(new Date());
   const fullMessage = args.length > 0 ? `${message} ${args.join(' ')}` : message;
   const logMessage = `[${timestamp}] [${level}] ${fullMessage}`;
   
@@ -114,7 +127,7 @@ app.post("/api/register", async (req, res) => {
     const newUser = new User({
       ...req.body,
       passwordHash,
-      
+
     });
 
     await newUser.save();
@@ -221,7 +234,7 @@ app.post("/api/login", async (req, res) => {
 
 // Health endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: formatDate(new Date()) });
 });
 
 app.get("/control", (req, res) => {
@@ -259,11 +272,30 @@ app.post('/control/stop', (req, res) => {
 });
 
 app.post('/control/restart', (req, res) => {
-  console.log('Restart command received');
-  res.json({ 
-    success: true, 
-    message: 'Restart not implemented - please use a process manager like PM2 for auto-restart' 
-  });
+  console.log('Restart command received, restarting server...');
+  res.json({ success: true, message: 'Server restarting' });
+  
+  setTimeout(() => {
+    const args = process.argv.slice(1);
+    const child = spawn(process.execPath, args, {
+      detached: true,
+      stdio: 'ignore',
+      cwd: process.cwd(),
+      env: process.env
+    });
+    
+    child.unref();
+    console.log('New process spawned, shutting down current process...');
+    process.exit(0);
+  }, 1000);
+});
+
+app.post('/control/clearlogs', (req, res) => {
+  console.log('Clear logs command received');
+  serverState.logs = [];
+  serverState.errors = [];
+  console.log('Logs and errors cleared');
+  res.json({ success: true, message: 'Logs cleared successfully' });
 });
 
 // Start server when run directly

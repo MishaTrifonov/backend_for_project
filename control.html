@@ -4,22 +4,48 @@
   <meta charset="utf-8" />
   <title>Unity Backend Control</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    body { font-family: system-ui, Arial; margin: 16px; }
-    .controls { margin-bottom: 12px; }
-    button { margin-right: 8px; padding: 8px 12px; }
-    pre { background:#111; color:#eee; padding:12px; height:60vh; overflow:auto; white-space:pre-wrap; }
-    .status { margin-bottom:8px; font-size:90%; color:#333; }
-  </style>
+<style>
+    body {
+        font-family: system-ui, Arial;
+        margin: 16px;
+    }
+
+    .controls {
+        margin-bottom: 12px;
+    }
+
+    button {
+        margin-right: 8px;
+        padding: 8px 12px;
+    }
+
+    pre {
+        background: #111;
+        color: #eee;
+        padding: 12px;
+        height: 60vh;
+        overflow: auto;
+        white-space: pre-wrap;
+    }
+
+    .status {
+        margin-bottom: 8px;
+        font-size: 90%;
+        color: #333;
+    }
+</style>
 </head>
 <body>
-  <h2>Unity Backend Control</h2>
-  <div class="status" id="status">Loading status...</div>
-  <div class="controls">
-    <button id="stopBtn">Stop Server</button>
-    <button id="restartBtn">Restart Server</button>
-    <button id="refreshLogsBtn">Refresh Logs</button>
-  </div>
+  
+  <div class="container hidden" id="controlPanel">
+    <h2>Unity Backend Control Panel</h2>
+    <div class="status" id="status">Loading status...</div>
+    <div class="controls">
+      <button class="btn-danger" id="stopBtn">Stop Server</button>
+      <button class="btn-warning" id="restartBtn">Restart Server</button>
+      <button class="btn-success" id="clearLogsBtn">Clear Logs</button>
+      <button class="btn-primary" id="refreshLogsBtn">Refresh Logs</button>
+    </div>
   <div>
     <h3>Logs</h3>
     <pre id="logs">Loading logs...</pre>
@@ -114,9 +140,25 @@
       alert(JSON.stringify(r));
     });
 
+    clearLogsBtn.addEventListener('click', async () => {
+      if (!confirm('Clear all logs and errors? This cannot be undone.')) return;
+      console.log('Clear logs button clicked');
+      clearLogsBtn.disabled = true;
+      const r = await fetchJSON('/control/clearlogs', { method: 'POST' });
+      console.log('Clear logs response:', r);
+      clearLogsBtn.disabled = false;
+      if (r.success) {
+        loadLogs();
+        loadErrors();
+      } else {
+        alert('Failed to clear logs: ' + (r.message || 'Unknown error'));
+      }
+    });
+
     refreshLogsBtn.addEventListener('click', () => {
       console.log('Refresh logs button clicked');
       loadLogs();
+      loadErrors();
     });
 
     console.log('Control panel initialized');

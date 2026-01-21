@@ -17,14 +17,13 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "bcryptjs": "^3.0.3",
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "mongodb": "^6.3.0",
-    "mongoos": "^0.0.1-security",
-    "mongoose": "^9.1.4",
-    "ws": "^8.17.1"
+    "fly": "^4.6.16",
+    "mongoose": "^8.0.0",
+    "railway": "^2.0.11"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

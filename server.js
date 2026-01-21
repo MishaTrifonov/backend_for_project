@@ -45,6 +45,54 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('users', userSchema);
 
+const studentProfileSchema = new mongoose.Schema(
+  {
+    id: { type: String },
+    name: { type: String },
+    extroversion: { type: Number },
+    sensitivity: { type: Number },
+    rebelliousness: { type: Number },
+    academicMotivation: { type: Number },
+    initialHappiness: { type: Number },
+    initialBoredom: { type: Number },
+  },
+  { _id: false, strict: false }, // allow extra fields without breaking
+);
+
+const scenarioDocSchema = new mongoose.Schema(
+  {
+    fileName: { type: String, required: true, unique: true, index: true }, // "scenario_basic_classroom.json"
+    scenarioName: { type: String, required: true }, // "Basic Classroom - Morning Math"
+    description: { type: String, default: "" },
+    difficulty: { type: String, default: "" },
+    studentProfiles: { type: [studentProfileSchema], default: [] },
+  },
+  { collection: "scenarios", timestamps: true },
+);
+
+const ScenarioDoc = mongoose.model("scenarios", scenarioDocSchema);
+
+function normalizeScenarioFileName(input) {
+  if (typeof input !== "string") return null;
+  const fileName = input.trim();
+
+  // Basic safety: avoid path traversal and weird chars
+  // Allow: letters, numbers, underscore, dash, dot. Require ".json"
+  if (fileName.length < 1 || fileName.length > 128) return null;
+  if (!/^[a-zA-Z0-9._-]+\.json$/.test(fileName)) return null;
+
+  return fileName;
+}
+
+function ensureMongoReady(res) {
+  // 1 = connected
+  if (mongoose.connection.readyState !== 1) {
+    res.status(503).json({ success: false, message: "Database not connected" });
+    return false;
+  }
+  return true;
+}
+
 // Date formatting function
 function formatDate(date) {
   const d = new Date(date);
@@ -59,7 +107,7 @@ function formatDate(date) {
 
 // Server state tracking
 const serverState = {
-  startedAt: formatDate(new Date()),
+  startedAt: new Date(),
   pid: process.pid,
   logs: [],
   errors: [],
@@ -243,11 +291,11 @@ app.get("/control", (req, res) => {
 
 // Control API endpoints
 app.get('/control/status', (req, res) => {
-  const uptime = (Date.now() - new Date(serverState.startedAt).getTime()) / 1000;
+  const uptime = (Date.now() - serverState.startedAt.getTime()) / 1000;
   res.json({
     pid: serverState.pid,
     uptime: uptime,
-    startedAt: serverState.startedAt,
+    startedAt: formatDate(serverState.startedAt),
     mongoConnected: mongoose.connection.readyState === 1
   });
 });
@@ -298,13 +346,137 @@ app.post('/control/clearlogs', (req, res) => {
   res.json({ success: true, message: 'Logs cleared successfully' });
 });
 
-// Start server when run directly
-if (require.main === module) {
-  const port = Number(process.env.PORT) || 3000;
-  app.listen(port, () => {
-    console.log(`Server listening on http://localhost:${port}`);
-    console.log(`Control panel available at http://localhost:${port}/control`);
-  });
-}
+// GET /api/scenarios -> list available scenario filenames
+app.get("/api/scenarios", async (req, res) => {
+  try {
+    if (!ensureMongoReady(res)) return;
+
+    const docs = await ScenarioDoc.find({}, { fileName: 1, _id: 0 })
+      .sort({ fileName: 1 })
+      .lean();
+
+    const scenarios = docs.map((d) => d.fileName);
+
+    return res.json({
+      success: true,
+      message: "Scenarios fetched",
+      scenarios,
+    });
+  } catch (error) {
+    console.error("GET /api/scenarios error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error fetching scenarios",
+      scenarios: [],
+    });
+  }
+});
+
+// GET /api/scenarios/:fileName -> get a scenario by filename
+app.get("/api/scenarios/:fileName", async (req, res) => {
+  try {
+    if (!ensureMongoReady(res)) return;
+
+    const fileName = normalizeScenarioFileName(req.params.fileName);
+    if (!fileName) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "Invalid scenario filename",
+          scenario: null,
+        });
+    }
+
+    const doc = await ScenarioDoc.findOne({ fileName }).lean();
+    if (!doc) {
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "Scenario not found",
+          scenario: null,
+        });
+    }
+
+    // Unity expects "scenario" to be the JSON object
+    const scenario = {
+      scenarioName: doc.scenarioName,
+      description: doc.description,
+      difficulty: doc.difficulty,
+      studentProfiles: doc.studentProfiles || [],
+    };
+
+    return res.json({
+      success: true,
+      message: "Scenario loaded",
+      scenario,
+    });
+  } catch (error) {
+    console.error("GET /api/scenarios/:fileName error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error loading scenario",
+      scenario: null,
+    });
+  }
+});
+
+// POST /api/scenarios -> save/update a scenario
+// Body expected by Unity: { fileName: string, scenario: object }
+app.post("/api/scenarios", async (req, res) => {
+  try {
+    if (!ensureMongoReady(res)) return;
+
+    const { fileName: rawFileName, scenario } = req.body || {};
+    const fileName = normalizeScenarioFileName(rawFileName);
+
+    if (!fileName) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid scenario filename" });
+    }
+    if (!scenario || typeof scenario !== "object") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid scenario payload" });
+    }
+
+    const scenarioName =
+      typeof scenario.scenarioName === "string"
+        ? scenario.scenarioName.trim()
+        : "";
+    if (!scenarioName) {
+      return res
+        .status(400)
+        .json({ success: false, message: "scenario.scenarioName is required" });
+    }
+
+    const update = {
+      fileName,
+      scenarioName,
+      description:
+        typeof scenario.description === "string" ? scenario.description : "",
+      difficulty:
+        typeof scenario.difficulty === "string" ? scenario.difficulty : "",
+      studentProfiles: Array.isArray(scenario.studentProfiles)
+        ? scenario.studentProfiles
+        : [],
+    };
+
+    await ScenarioDoc.updateOne(
+      { fileName },
+      { $set: update },
+      { upsert: true },
+    );
+
+    return res.json({ success: true, message: "Scenario saved" });
+  } catch (error) {
+    console.error("POST /api/scenarios error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error saving scenario" });
+  }
+});
 
 module.exports = app;
